@@ -18,7 +18,11 @@ function fake(initial = null, failure = null) {
         result.tracks.persistentID = () => result.tracks.map(t => t.id);
         result.smart = () => false;
         result.genius = () => false;
-        result.description = () => description;
+        let currentDescription = description;
+        Object.defineProperty(result, 'description', {
+            get: () => () => currentDescription,
+            set: value => { currentDescription = value; }
+        });
         result.persistentID = () => result.identifier;
         ids.forEach(id => result.tracks.push({id, parent: result}));
         return result;
@@ -31,7 +35,12 @@ function fake(initial = null, failure = null) {
     let failed = false;
     const music = {
         libraryPlaylists: [{fileTracks: library}], userPlaylists,
-        UserPlaylist: properties => playlist(properties.name, [], properties.description),
+        UserPlaylist: properties => ({make: () => {
+            mutations++;
+            const p = playlist(properties.name, [], marker);
+            playlists.push(p);
+            return p;
+        }}),
         duplicate: (track, {to}) => {
             mutations++;
             if (!failed && failure && failure(to, track)) { failed = true; throw Error('injected failure'); }

@@ -239,12 +239,16 @@ triggers Finder or changes iPhone synchronization settings.
 
 ## Validation scope
 
-The adapter and publication preflight have been exercised against the actual
-728-track library. Playlist creation/replacement and rollback are covered using
-a simulated Music interface, including protection against deleting library
-tracks. Actual playlist writes and launchd activation have not been performed
-against the user's library. Verify the first actual publication before enabling
-the schedule.
+Native validation completed on October 5, 2026 against the actual 728-track
+library: playlist creation, replacement, order verification, persistent ID
+preservation, and unchanged retries all passed. Library track IDs and Grouping
+tags were preserved. Replacement testing restored the frozen mix's original order.
+
+The per-user LaunchAgent was installed and activated for 03:00 with Last.fm refresh
+enabled. A manually triggered run through launchd completed with exit code 0 and
+verified the existing 30-track playlist. Unit tests additionally cover simulated
+write failures, rollback, ownership checks, and missing tracks. Private validation
+reports and logs remain local under `outputs/` and `state/`.
 
 ## Verification
 

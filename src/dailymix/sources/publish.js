@@ -49,21 +49,27 @@ function publish(music, request) {
     let stage = null;
     let touched = false;
     let created = false;
+    let phase = "create staging playlist";
     try {
-        stage = music.UserPlaylist({name: request.staging_name, description: marker});
-        music.userPlaylists.push(stage);
+        stage = music.UserPlaylist({name: request.staging_name}).make();
+        stage.description = marker;
+        phase = "fill staging playlist";
         fill(stage, ids);
+        phase = "verify staging playlist";
         verify(stage, ids);
         if (!target) {
+            phase = "rename staging playlist";
             stage.name = request.name;
             target = stage;
             stage = null;
             created = true;
         } else {
+            phase = "replace destination contents";
             touched = true;
             clear(target);
             fill(target, ids);
         }
+        phase = "verify destination playlist";
         verify(target, ids);
         return Object.assign(plan, {playlist_id: target.persistentID(), verified: true});
     } catch (error) {
@@ -72,7 +78,7 @@ function publish(music, request) {
             catch (rollback) { throw Error('Publication failed and rollback failed; restore from the saved backup: ' + rollback.message); }
         }
         if (created) music.delete(target);
-        throw error;
+        throw Error(phase + ": " + error.message);
     } finally {
         if (stage) music.delete(stage);
     }
