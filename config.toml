@@ -1,0 +1,21 @@
+[mix]
+size = 30
+artist_limit = 2
+album_limit = 1
+cooldown_days = 3
+mix_repeat_days = 7
+recent_days = 45
+rediscovery_days = 30
+exploration_age_days = 14
+# Fixed pool order also determines fallback order.
+pools = { familiar = 10, rediscovery = 8, recent = 6, exploration = 6 }
+# Soft targets, independent of source-association tags.
+primary_targets = { JP = 23, PM = 5, CN = 1, EN = 1 }
+
+[tags]
+primary = ["JP", "PM", "CN", "EN"]
+associations = ["A", "R", "V"]
+
+[lastfm]
+# Set LASTFM_API_KEY in the environment; never save it here.
+username = "BrandenXia"
