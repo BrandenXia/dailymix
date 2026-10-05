@@ -4,9 +4,10 @@ A local, dependency-free Python CLI that reads Apple Music, previews determinist
 recommendations, and retains optional Last.fm history. Requires Python 3.11+;
 reading Music requires macOS and permission to automate Music.
 
-This version never changes Music metadata or playlists. `generate` freezes a
-selection in the local database only. Playlist publication and scheduling are
-future steps.
+Reading, previewing, and generating do not modify Music. Playlist writes require
+`publish` or `run --publish`; they update only a dedicated managed user playlist.
+`generate` freezes a selection in the local database only. Scheduling exports a
+launchd job without installing or starting it.
 
 ## Quick start
 
@@ -20,7 +21,7 @@ python3 -m dailymix preview --catalog work/music-snapshot.json --output work/pre
 python3 -m dailymix generate --catalog work/music-snapshot.json --output work/daily-mix.json
 ```
 
-Create `work/` first if using another checkout. `snapshot` reads Music through a
+`snapshot` reads Music through a
 bundled JXA script. `preview` does not save a daily selection, but returns an
 already frozen selection if one exists. `generate` saves that day's selection
 once; subsequent runs return it even if the input catalog changes. Both report
@@ -125,19 +126,121 @@ when changing size. This is an initial heuristic, to be tuned from previews.
 - `features.py`: source-independent, cutoff-aware listening features.
 - `generator.py`: pure deterministic selection; no external I/O.
 - `state.py`: SQLite event history and frozen daily mixes.
-- `cli.py`: orchestration, validation, input fingerprints and output.
+- `service.py`: frozen selection and reproducible input fingerprints.
+- `publication.py` and `sources/publish.js`: preflight, backup and managed playlist updates.
+- `schedule.py`: portable per-user launchd job export.
+- `cli.py`: orchestration, validation and output.
 
 Generation uses a SQLite transaction to serialize simultaneous saves. The saved
 mix includes display metadata and reasons, so it is reviewable without Music.
-A future playlist writer should consume this saved selection and keep its own
-publication status, allowing failed publication to retry without regenerating.
+The playlist writer consumes this saved selection and records publication
+separately, so a failed publication can retry without regenerating.
 Future sources should emit `Event` records; they should not alter the generator
 or require every event to match a local track.
 
 Private snapshots, previews and history are excluded from source control.
+
+
+## Daily run and playlist publication
+
+Read the current Music library and freeze today's mix with one command:
+
+```sh
+python3 -m dailymix run --output outputs/daily-mix.json
+```
+
+Optionally add `--sync-lastfm` to refresh up to ten pages of history from the
+last 45 days before freezing. Missing credentials or network failures produce
+warnings and use cached history. This refresh is not a full-history backfill.
+An already frozen day reuses its selection and skips refresh and catalog reads.
+
+Inspect publication without writing to Music:
+
+```sh
+python3 -m dailymix publish --dry-run --output outputs/publication-plan.json
+```
+
+To actually create/update the managed playlist:
+
+```sh
+python3 -m dailymix publish
+# Or perform the daily generation and publication together:
+python3 -m dailymix run --publish
+```
+
+The default destination is `Daily Mix`; choose another with `--playlist NAME`.
+If an unrelated playlist already has that name, publication refuses to overwrite
+it. A playlist created by this tool has description `dailymix:managed:v1`.
+Don't remove that description if you want the tool to maintain it.
+
+Publication validates that every selected track still exists, stages the new
+contents in a temporary playlist, and verifies membership and order. Existing
+managed playlists keep their persistent ID. Replacement removes references from
+that user playlist, never tracks from the library. A caught replacement error
+attempts to restore its old contents. Every write first saves the previous IDs in
+`state/publication-backups/`; interruption or timeout may require inspecting
+those backups and the playlist before retrying. These backups are retained.
+
+A process lock prevents concurrent writes. A retry verifies Music's actual
+contents, even when the database already records publication. An unchanged
+playlist does not get cleared and rebuilt. Empty mixes are never published.
+Generation is committed before publication, so publication failure leaves the
+selected mix intact. Publication history is separate from the mix payload;
+`preview`/`run` output includes a `publications` list.
+
+## Daily schedule
+
+Export a job to generate and publish at 03:00 each day:
+
+```sh
+python3 -m dailymix schedule --publish --hour 3 --output outputs/com.brandenxia.dailymix.plist
+```
+
+The job has absolute interpreter/config/state paths and a source import path.
+Keep the checkout and interpreter at those paths, or regenerate the file after
+moving them. Omit `--publish` for local-only daily generation. Exporting a job
+does not activate it.
+
+After reviewing the job, install and load it in your user session:
+
+```sh
+mkdir -p "$HOME/Library/LaunchAgents"
+cp outputs/com.brandenxia.dailymix.plist "$HOME/Library/LaunchAgents/com.brandenxia.dailymix.plist"
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.brandenxia.dailymix.plist"
+```
+
+Unload it before replacing an already loaded job:
+
+```sh
+launchctl bootout "gui/$(id -u)/com.brandenxia.dailymix"
+```
+
+Launchd uses the Mac's local clock for the schedule; `--timezone` controls the
+mix date boundary, not launchd's scheduling timezone. The job runs in your logged-in
+user session. It does not wake a sleeping Mac; calendar jobs missed during sleep
+run on wake, as described in Apple's
+[Scheduling Timed Jobs](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/ScheduledJobs.html).
+It has no immediate run-on-load behavior. First run the CLI interactively to grant
+Music automation access; macOS may require access for the scheduled context too.
+
+Logs go to `state/logs/daily.log` and `state/logs/daily-error.log`. The exported
+job uses cached Last.fm history; it contains no API key and does not inherit your
+shell's environment. Sync history interactively before generation. Nothing here
+triggers Finder or changes iPhone synchronization settings.
+
+## Validation scope
+
+The adapter and publication preflight have been exercised against the actual
+728-track library. Playlist creation/replacement and rollback are covered using
+a simulated Music interface, including protection against deleting library
+tracks. Actual playlist writes and launchd activation have not been performed
+against the user's library. Verify the first actual publication before enabling
+the schedule.
 
 ## Verification
 
 ```sh
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
+
+The publisher bridge test uses Node when available; the CLI itself needs only Python and macOS.

@@ -1,26 +1,25 @@
 import argparse
 from collections import Counter
-from dataclasses import asdict
-from datetime import date, datetime, time
-import hashlib
+from datetime import date, datetime
 import json
 import os
 from pathlib import Path
-import sys
 import tomllib
 from zoneinfo import ZoneInfo
-from .features import build_features
-from .generator import generate
 from .models import Event
 from .sources.apple_music import read_music, load_catalog
 from .sources.lastfm import parse_page, fetch_history
 from .state import Store
+from .service import select_mix
+from .publication import publish_mix
+from .schedule import write_schedule
 
 
 def emit(payload, output=None):
     value = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     if output:
         path = Path(output)
+        path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(path.name + ".tmp")
         temporary.write_text(value)
         temporary.replace(path)
@@ -28,12 +27,8 @@ def emit(payload, output=None):
         print(value, end="")
 
 
-def fingerprint(payload):
-    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-
-
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Read-only Apple Music Daily Mix previews")
+    parser = argparse.ArgumentParser(description="Deterministic Apple Music mixes and optional playlist publishing")
     parser.add_argument("--config", default="config.toml")
     parser.add_argument("--state", default="state/history.sqlite3")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -50,6 +45,28 @@ def main(argv=None):
     sync.add_argument("--max-pages", type=int, default=10)
     sync.add_argument("--to-timestamp", type=int, help="Reuse the reported upper bound when resuming")
     sync.add_argument("--start-page", type=int, default=1)
+    publish = commands.add_parser("publish", help="Publish a frozen mix to a managed Music playlist")
+    publish.add_argument("--date")
+    publish.add_argument("--timezone", default="America/Indiana/Indianapolis")
+    publish.add_argument("--playlist", default="Daily Mix")
+    publish.add_argument("--dry-run", action="store_true")
+    publish.add_argument("--output")
+    run = commands.add_parser("run", help="Read Music and freeze today's mix; optionally publish")
+    run.add_argument("--date")
+    run.add_argument("--timezone", default="America/Indiana/Indianapolis")
+    run.add_argument("--username")
+    run.add_argument("--overrides")
+    run.add_argument("--playlist", default="Daily Mix")
+    run.add_argument("--publish", action="store_true")
+    run.add_argument("--sync-lastfm", action="store_true", help="Refresh up to ten recent history pages if an API key is available")
+    run.add_argument("--output")
+    schedule = commands.add_parser("schedule", help="Export a launchd job; does not install or start it")
+    schedule.add_argument("--output", required=True)
+    schedule.add_argument("--hour", type=int, default=3)
+    schedule.add_argument("--minute", type=int, default=0)
+    schedule.add_argument("--timezone", default="America/Indiana/Indianapolis")
+    schedule.add_argument("--publish", action="store_true")
+    schedule.add_argument("--playlist", default="Daily Mix")
     for name in ("preview", "generate"):
         p = commands.add_parser(name, help="Preview" if name == "preview" else "Freeze a local daily mix; no playlist writes")
         p.add_argument("--catalog", required=True)
@@ -70,6 +87,11 @@ def main(argv=None):
                   "groupings": dict(Counter(t.grouping for t in tracks))})
             return
         config = tomllib.loads(Path(args.config).read_text())
+        if args.command == "schedule":
+            ZoneInfo(args.timezone)
+            emit(write_schedule(args.output, args.config, args.state, args.hour, args.minute,
+                                args.publish, args.playlist, args.timezone))
+            return
         Path(args.state).parent.mkdir(parents=True, exist_ok=True)
         store = Store(args.state)
         if args.command == "import-lastfm":
@@ -98,32 +120,41 @@ def main(argv=None):
             return
         timezone = ZoneInfo(args.timezone)
         day = date.fromisoformat(args.date) if args.date else datetime.now(timezone).date()
-        with store.transaction():
-            saved = store.mix(day.isoformat())
-            if saved:
-                if saved.get("timezone") != args.timezone:
-                    raise ValueError("This date was frozen in a different timezone")
-                emit({**saved, "cached": True}, args.output)
-                return
-            tracks = load_catalog(json.loads(Path(args.catalog).read_text()))
-            events = store.events(args.username or config.get("lastfm", {}).get("username") or None)
-            overrides = {}
-            if args.overrides:
-                from .models import normalize
-                for row in json.loads(Path(args.overrides).read_text()):
-                    overrides[tuple(normalize(row[k]) for k in ("artist", "title", "album"))] = row["track_id"]
-            cutoff = datetime.combine(day, time.min, timezone)
-            features, matches = build_features(tracks, events, cutoff, overrides)
-            history = store.history(day.isoformat())
-            mix = generate(tracks, features, day, config, history, timezone)
-            mix.update({"schema_version": 1, "timezone": args.timezone, "matching": matches,
-                        "input_fingerprint": fingerprint({"tracks": sorted([asdict(t) for t in tracks], key=lambda t: t["id"]),
-                                                          "events": [asdict(e) for e in events], "config": config,
-                                                          "overrides": sorted((list(k), v) for k, v in overrides.items()), "history": history,
-                                                          "date": day.isoformat(), "timezone": args.timezone}),
-                        "algorithm_version": "0.1.0", "published": False})
-            if args.command == "generate":
-                store.save_mix(day.isoformat(), mix)
+        if args.command == "publish":
+            mix = store.mix(day.isoformat())
+            if not mix:
+                raise ValueError("No frozen mix for this date; run generate or run first")
+            if mix.get("timezone") != args.timezone:
+                raise ValueError("This date was frozen in a different timezone")
+            emit(publish_mix(store, args.state, mix, args.playlist, args.dry_run), args.output)
+            return
+        warnings = []
+        if args.command == "run":
+            username = args.username or config.get("lastfm", {}).get("username")
+            if args.sync_lastfm and not store.mix(day.isoformat()):
+                key = os.environ.get("LASTFM_API_KEY")
+                if key and username:
+                    try:
+                        since = max(0, int(datetime.now(timezone).timestamp()) - 45 * 86400)
+                        events, progress = fetch_history(username, key, since=since)
+                        store.import_events(events)
+                        if not progress["complete"]:
+                            warnings.append("Recent Last.fm refresh reached its page limit; use sync-lastfm to finish importing")
+                    except (RuntimeError, ValueError, OSError) as error:
+                        warnings.append(str(error) + "; using cached listening history")
+                else:
+                    warnings.append("Last.fm key or username missing; using cached listening history")
+            catalog_loader = read_music
+        else:
+            catalog_loader = lambda: json.loads(Path(args.catalog).read_text())
+        mix = select_mix(store, day, timezone, args.timezone, config, catalog_loader,
+                         args.username, args.overrides, save=args.command in ("generate", "run"))
+        if args.command == "run" and args.publish:
+            publication = publish_mix(store, args.state, mix, args.playlist)
+            mix = {**mix, "publication": publication}
+        mix = {**mix, "publications": store.publications(day.isoformat())}
+        if warnings:
+            mix = {**mix, "warnings": warnings}
         emit(mix, args.output)
     except (ValueError, OSError, RuntimeError, KeyError) as error:
         parser.exit(1, f"dailymix: {error}\n")
