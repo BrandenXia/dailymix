@@ -43,7 +43,10 @@ def fetch_history(username, api_key, since=0, max_pages=10, until=None, start_pa
         except URLError:
             # Avoid putting URLs containing credentials into error messages.
             raise RuntimeError("Last.fm request failed; check connectivity and retry") from None
-        rows, total = parse_page(payload, username)
+        try:
+            rows, total = parse_page(payload, username)
+        except ValueError as error:
+            raise ValueError(str(error).replace(api_key, "[redacted]")) from None
         events.extend(rows)
         fetched += 1
         if page >= total or fetched >= max_pages:

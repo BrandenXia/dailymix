@@ -76,10 +76,11 @@ class PublicationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'daily.plist'
             state = Path(directory) / 'state.sqlite3'
-            result = write_schedule(path, 'config.toml', state, 3, 15, True)
+            result = write_schedule(path, 'config.toml', state, 3, 15, True, sync_lastfm=True)
             payload = plistlib.loads(path.read_bytes())
             self.assertEqual(payload['StartCalendarInterval'], {'Hour': 3, 'Minute': 15})
             self.assertIn('--publish', payload['ProgramArguments'])
+            self.assertIn('--sync-lastfm', payload['ProgramArguments'])
             self.assertTrue(Path(payload['ProgramArguments'][0]).is_absolute())
             source_path = Path(payload['EnvironmentVariables']['PYTHONPATH'])
             self.assertTrue(source_path.is_absolute())

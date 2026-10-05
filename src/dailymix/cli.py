@@ -2,7 +2,6 @@ import argparse
 from collections import Counter
 from datetime import date, datetime
 import json
-import os
 from pathlib import Path
 import tomllib
 from zoneinfo import ZoneInfo
@@ -13,6 +12,7 @@ from .state import Store
 from .service import select_mix
 from .publication import publish_mix
 from .schedule import write_schedule
+from .credentials import lastfm_api_key
 
 
 def emit(payload, output=None):
@@ -31,6 +31,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Deterministic Apple Music mixes and optional playlist publishing")
     parser.add_argument("--config", default="config.toml")
     parser.add_argument("--state", default="state/history.sqlite3")
+    parser.add_argument("--env-file", help="Credentials file; defaults to .env beside config.toml")
     commands = parser.add_subparsers(dest="command", required=True)
     export = commands.add_parser("snapshot", help="Read Music metadata; never modify the library")
     export.add_argument("--output", required=True)
@@ -66,6 +67,7 @@ def main(argv=None):
     schedule.add_argument("--minute", type=int, default=0)
     schedule.add_argument("--timezone", default="America/Indiana/Indianapolis")
     schedule.add_argument("--publish", action="store_true")
+    schedule.add_argument("--sync-lastfm", action="store_true")
     schedule.add_argument("--playlist", default="Daily Mix")
     for name in ("preview", "generate"):
         p = commands.add_parser(name, help="Preview" if name == "preview" else "Freeze a local daily mix; no playlist writes")
@@ -90,7 +92,7 @@ def main(argv=None):
         if args.command == "schedule":
             ZoneInfo(args.timezone)
             emit(write_schedule(args.output, args.config, args.state, args.hour, args.minute,
-                                args.publish, args.playlist, args.timezone))
+                                args.publish, args.playlist, args.timezone, args.sync_lastfm))
             return
         Path(args.state).parent.mkdir(parents=True, exist_ok=True)
         store = Store(args.state)
@@ -106,7 +108,7 @@ def main(argv=None):
             return
         if args.command == "sync-lastfm":
             username = args.username or config.get("lastfm", {}).get("username")
-            key = os.environ.get("LASTFM_API_KEY")
+            key = lastfm_api_key(args.env_file or Path(args.config).resolve().with_name(".env"))
             if not username or not key:
                 raise ValueError("Set a Last.fm username and LASTFM_API_KEY")
             if args.max_pages < 1 or args.from_timestamp < 0 or args.start_page < 1:
@@ -132,7 +134,7 @@ def main(argv=None):
         if args.command == "run":
             username = args.username or config.get("lastfm", {}).get("username")
             if args.sync_lastfm and not store.mix(day.isoformat()):
-                key = os.environ.get("LASTFM_API_KEY")
+                key = lastfm_api_key(args.env_file or Path(args.config).resolve().with_name(".env"))
                 if key and username:
                     try:
                         since = max(0, int(datetime.now(timezone).timestamp()) - 45 * 86400)

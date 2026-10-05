@@ -4,7 +4,7 @@ import sys
 
 
 def write_schedule(output, config, state, hour=3, minute=0, publish=False,
-                   playlist='Daily Mix', timezone='America/Indiana/Indianapolis'):
+                   playlist='Daily Mix', timezone='America/Indiana/Indianapolis', sync_lastfm=False):
     if not 0 <= hour <= 23 or not 0 <= minute <= 59:
         raise ValueError('Schedule hour/minute is out of range')
     root = Path(__file__).resolve().parents[1]
@@ -15,6 +15,8 @@ def write_schedule(output, config, state, hour=3, minute=0, publish=False,
             '--state', str(state_path), 'run', '--timezone', timezone, '--playlist', playlist]
     if publish:
         args.append('--publish')
+    if sync_lastfm:
+        args.append('--sync-lastfm')
     payload = {'Label': 'com.brandenxia.dailymix', 'ProgramArguments': args,
                'WorkingDirectory': str(Path.cwd()),
                'EnvironmentVariables': {'PYTHONPATH': str(root)},

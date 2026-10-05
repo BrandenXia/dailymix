@@ -41,9 +41,14 @@ python3 -m dailymix --config config.toml --state state/history.sqlite3 preview -
 
 ## Last.fm
 
-Set `lastfm.username` in `config.toml` or supply `--username`. Supply the API key
-through `LASTFM_API_KEY` in your environment; don't put it in configuration,
-source control, or command arguments. The read-only adapter uses Last.fm's
+Set `lastfm.username` in `config.toml` or supply `--username`. Put the API key in
+`.env` beside `config.toml` as `LASTFM_API_KEY=...` or `API_key=...`. The latter
+matches the name used in Last.fm's generated credentials. `LASTFM_API_KEY` in the
+process environment takes precedence; `--env-file PATH` overrides the file location.
+The shared secret and other entries are ignored because history reads don't need
+them. The file is parsed as data, without shell execution or variable expansion.
+Never put credentials in tracked configuration or command arguments. `.env` is
+excluded from Git. The read-only adapter uses Last.fm's
 [user.getRecentTracks](https://www.last.fm/api/show/user.getRecentTracks) method.
 It makes no scrobble or account changes.
 
@@ -126,6 +131,7 @@ when changing size. This is an initial heuristic, to be tuned from previews.
 - `features.py`: source-independent, cutoff-aware listening features.
 - `generator.py`: pure deterministic selection; no external I/O.
 - `state.py`: SQLite event history and frozen daily mixes.
+- `credentials.py`: local .env key loading without shell evaluation.
 - `service.py`: frozen selection and reproducible input fingerprints.
 - `publication.py` and `sources/publish.js`: preflight, backup and managed playlist updates.
 - `schedule.py`: portable per-user launchd job export.
@@ -224,8 +230,11 @@ It has no immediate run-on-load behavior. First run the CLI interactively to gra
 Music automation access; macOS may require access for the scheduled context too.
 
 Logs go to `state/logs/daily.log` and `state/logs/daily-error.log`. The exported
-job uses cached Last.fm history; it contains no API key and does not inherit your
-shell's environment. Sync history interactively before generation. Nothing here
+job uses cached Last.fm history by default. Add `--sync-lastfm` to `schedule`
+to refresh recent history before each new mix; it loads the ignored `.env` beside
+the configured config file. The plist contains no API key. Without `.env`, the
+job does not inherit your shell's environment; sync interactively or supply keys
+through the job's environment outside source control. Nothing here
 triggers Finder or changes iPhone synchronization settings.
 
 ## Validation scope
