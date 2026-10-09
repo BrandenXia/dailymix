@@ -109,6 +109,7 @@ skips and ratings remain separate signals. Events on or after the generation
 day's midnight are excluded; absent scrobbles are not dislikes.
 
 Configuration defines pool quotas, tag balance, cooldowns and diversity limits.
+The v0.2 recommendation profile is described below.
 Grouping is parsed as comma-separated uppercase tags while preserving the raw
 value. JP/PM/CN/EN are configurable primary categories; A/R/V are association
 codes. Missing or conflicting primary tags become unknown. Tag meanings remain
@@ -117,7 +118,7 @@ assumptions from the library inspection, not inferred mood or energy labels.
 Selection scans bounded candidate sets using stable date/ID hashes and soft tag
 deficits. It keeps artist and album caps, avoids already selected tracks and
 recent mixes, and prefers different adjacent artists where possible. If a pool
-cannot supply a slot, it tries the other pools in configured order, then all
+cannot supply a slot, it tries the other pools in quota-deficit order, then all
 eligible local tracks. It reports a shortfall instead of relaxing cooldowns or
 hard caps. Configured pool quotas must total the mix size; adjust tag targets
 when changing size. This is an initial heuristic, to be tuned from previews.
@@ -129,7 +130,8 @@ when changing size. This is an initial heuristic, to be tuned from previews.
 - `models.py`: independent catalog and listening event models.
 - `matching.py`: conservative resolver and explicit overrides.
 - `features.py`: source-independent, cutoff-aware listening features.
-- `generator.py`: pure deterministic selection; no external I/O.
+- `scoring.py`: bounded utilities, validated settings and algorithm version.
+- `generator.py`: adaptive pools, content profiles and deterministic selection; no external I/O.
 - `state.py`: SQLite event history and frozen daily mixes.
 - `credentials.py`: local .env key loading without shell evaluation.
 - `service.py`: frozen selection and reproducible input fingerprints.
@@ -146,6 +148,69 @@ or require every event to match a local track.
 
 Private snapshots, previews and history are excluded from source control.
 
+
+## Recommendation algorithm v0.2
+
+The generator combines explicit signals while retaining deterministic daily
+rotation. The `[recommendation]` section in `config.toml` controls the weights.
+Existing frozen mixes keep their original algorithm version and order; the daily
+job uses the new version when generating the next unfrozen date.
+
+- Recent Last.fm plays decay with a 14-day half-life. A separate 180-day profile
+  preserves longer-term preference. All events can affect exact-artist affinity;
+  only confidently matched local songs contribute to local tag profiles.
+- Language/instrumental and association targets adapt independently. The defaults
+  blend 45% recent listening, 25% longer-term listening, 20% feedback from tracks
+  offered yesterday, and 10% baseline coverage. Each listening profile receives
+  ten baseline pseudo-observations, so sparse evidence cannot abruptly erase
+  coverage. Configured primary targets provide the baseline; association coverage
+  comes from the enabled library. Absent Spotify songs never inherit local tags.
+- Yesterday's feedback includes an offered track only when it has a matched
+  scrobble dated yesterday, or a local last-played date from yesterday. Each heard
+  track contributes once to the feedback profile, regardless of repeated plays.
+  This does not establish that the play originated in Daily Mix. Tracks offered
+  but not heard contribute no negative feedback. Missing history is not a dislike.
+- Familiar eligibility follows the median play evidence, with a minimum of five.
+  Underexplored eligibility follows the lower quartile, with a minimum of two.
+  This gives a well-listened library meaningful exploration candidates. Play
+  evidence remains the maximum of local plays and matched scrobbles, never their
+  sum. Rediscovery retains its minimum play count and age requirement.
+- Each pool has its own preference utility, combining listening intent, rating,
+  recent/long-term artist affinity, yesterday's artist feedback, skip risk, and
+  past mix exposure. Exposures decay over 14 days and incur a small repetition
+  penalty; exposure is not treated as evidence of listening or dislike. Extreme
+  supported skip risk excludes a song globally; a few skips have limited impact.
+- A stable hash supplies a daily weighted rotation key. Stronger preference
+  increases selection probability across days rather than sorting permanently by
+  popularity. Content deficits guide selection toward the adaptive targets, and
+  different adjacent artists are preferred where possible.
+- Cooldowns and artist/album caps remain hard constraints. Fallback slots favor
+  pools still below their quotas instead of always becoming familiar songs.
+  When constraints exhaust candidates, the mix reports a shortfall.
+
+Every selected track explains its utility components, weighted rotation key,
+content deficits, and listening evidence. Output also reports adaptive pool
+thresholds, candidate counts, learned targets, exclusions, and yesterday's
+confirmed feedback.
+
+To compare a new algorithm against a day that is already frozen:
+
+```sh
+python3 -m dailymix preview --fresh --catalog work/music-snapshot.json --output outputs/new-algorithm-preview.json
+```
+
+`--fresh` is available only for previews: it neither rewrites the frozen selection
+nor publishes a playlist. For an accurate comparison, take a fresh catalog
+snapshot first. Replay also requires the same history, configuration, date and
+algorithm version.
+
+Local validation used a 730-track snapshot and 11,618 cached listening events.
+The October 8 preview filled the 10/8/6/6 pool quotas; the original fixed-cutoff
+algorithm supplied no exploration tracks. A seven-day simulation using a fixed
+catalog and no assumed future listening produced 210 distinct tracks under both
+versions, spanning 114 artists under v0.2 versus 86 under v0.1. Artist/album limits
+held throughout. This checks rotation and coverage, not preference quality or
+historical recommendation accuracy. Actual feedback should guide further tuning.
 
 ## Daily run and playlist publication
 

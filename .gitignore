@@ -5,3 +5,5 @@ work/
 state/
 .env
 outputs/
+
+.DS_Store

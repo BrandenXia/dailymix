@@ -13,10 +13,12 @@ def fingerprint(payload):
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def select_mix(store, day, timezone, zone_name, config, catalog_loader, username=None, overrides_path=None, save=False):
+def select_mix(store, day, timezone, zone_name, config, catalog_loader, username=None, overrides_path=None, save=False, reuse_saved=True):
+    if save and not reuse_saved:
+        raise ValueError('Fresh recomputation is only allowed for previews')
     with store.transaction():
         saved = store.mix(day.isoformat())
-        if saved:
+        if saved and reuse_saved:
             if saved.get('timezone') != zone_name:
                 raise ValueError('This date was frozen in a different timezone')
             return {**saved, 'cached': True}
@@ -27,7 +29,7 @@ def select_mix(store, day, timezone, zone_name, config, catalog_loader, username
             for row in json.loads(Path(overrides_path).read_text()):
                 overrides[tuple(normalize(row[k]) for k in ('artist', 'title', 'album'))] = row['track_id']
         cutoff = datetime.combine(day, time.min, timezone)
-        features, matches = build_features(tracks, events, cutoff, overrides)
+        features, matches = build_features(tracks, events, cutoff, overrides, config)
         history = store.history(day.isoformat())
         mix = generate(tracks, features, day, config, history, timezone)
         mix.update({'schema_version': 1, 'timezone': zone_name, 'matching': matches,
@@ -35,7 +37,7 @@ def select_mix(store, day, timezone, zone_name, config, catalog_loader, username
                                                      'events': [asdict(e) for e in events], 'config': config,
                                                      'overrides': sorted((list(k), v) for k, v in overrides.items()),
                                                      'history': history, 'date': day.isoformat(), 'timezone': zone_name}),
-                    'algorithm_version': '0.1.0'})
+                    'algorithm_version': mix['algorithm_version']})
         if save:
             store.save_mix(day.isoformat(), mix)
         return mix

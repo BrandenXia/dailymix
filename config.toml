@@ -19,3 +19,21 @@ associations = ["A", "R", "V"]
 [lastfm]
 # Set LASTFM_API_KEY in the environment; never save it here.
 username = "BrandenXia"
+
+[recommendation]
+recent_half_life_days = 14
+long_half_life_days = 180
+familiar_quantile = 0.5
+exploration_quantile = 0.25
+exposure_half_life_days = 14
+# Remaining profile weight follows catalog coverage; absent songs have no inferred tags.
+recent_profile_weight = 0.45
+long_profile_weight = 0.25
+previous_mix_profile_weight = 0.2
+preference_strength = 2.5
+primary_balance_weight = 0.45
+association_balance_weight = 0.3
+artist_recent_weight = 0.25
+artist_long_weight = 0.1
+previous_mix_weight = 0.2
+exposure_weight = 0.2

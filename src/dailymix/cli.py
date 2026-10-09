@@ -71,6 +71,8 @@ def main(argv=None):
     schedule.add_argument("--playlist", default="Daily Mix")
     for name in ("preview", "generate"):
         p = commands.add_parser(name, help="Preview" if name == "preview" else "Freeze a local daily mix; no playlist writes")
+        if name == "preview":
+            p.add_argument("--fresh", action="store_true", help="Recompute a preview without altering the frozen mix")
         p.add_argument("--catalog", required=True)
         p.add_argument("--date", default=None)
         p.add_argument("--timezone", default="America/Indiana/Indianapolis")
@@ -150,7 +152,8 @@ def main(argv=None):
         else:
             catalog_loader = lambda: json.loads(Path(args.catalog).read_text())
         mix = select_mix(store, day, timezone, args.timezone, config, catalog_loader,
-                         args.username, args.overrides, save=args.command in ("generate", "run"))
+                         args.username, args.overrides, save=args.command in ("generate", "run"),
+                         reuse_saved=not getattr(args, "fresh", False))
         if args.command == "run" and args.publish:
             publication = publish_mix(store, args.state, mix, args.playlist)
             mix = {**mix, "publication": publication}
